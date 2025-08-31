@@ -18,6 +18,10 @@ export class MainScene extends Phaser.Scene {
   private player!: Phaser.GameObjects.Arc
   private ground!: Phaser.GameObjects.Rectangle
   private bullets!: Phaser.Physics.Arcade.Group
+  private targets: Phaser.GameObjects.Rectangle[] = []
+  private uiText!: Phaser.GameObjects.Text
+  private totalTargets = 0
+  private destroyedTargets = 0
   private speed = 220
   private jumpVelocity = -380
   private fireCooldown = 200 // ms
@@ -61,14 +65,109 @@ export class MainScene extends Phaser.Scene {
     // 碰撞
     this.physics.add.collider(this.player, this.ground)
 
+    // 目标（占位敌人）
+    this.spawnTargets()
+
     // 文本与背景
     this.add.text(20, 20, 'ContraLike - Arcade Physics + Input', { color: '#ffffff' }).setDepth(10)
+    this.uiText = this.add.text(20, 44, '', { color: '#ffffff' }).setDepth(10)
+    this.updateUI()
     this.cameras.main.setBackgroundColor(BG_COLOR)
+  }
+
+  private spawnTargets() {
+    const xs = [420, 540, 660]
+    const y = GAME_HEIGHT - 60
+    for (const x of xs) {
+      const rect = this.add.rectangle(x, y, 26, 26, 0xff6666)
+      this.physics.add.existing(rect, true)
+      rect.setData('hp', 3)
+      this.targets.push(rect)
+      this.totalTargets += 1
+      // 为每个目标注册 overlap（子弹击中目标）
+      this.physics.add.overlap(this.bullets, rect, (b, t) => {
+        const bullet = b as Phaser.GameObjects.Arc
+        const target = t as Phaser.GameObjects.Rectangle
+        // 命中：销毁子弹并对目标造成伤害
+        if (bullet.active) bullet.destroy()
+        this.damageTarget(target)
+      })
+    }
+  }
+
+  private damageTarget(target: Phaser.GameObjects.Rectangle) {
+    const hp: number = (target.getData('hp') as number) ?? 1
+    const next = Math.max(0, hp - 1)
+    target.setData('hp', next)
+
+    // 轻微屏幕震动以强化命中反馈
+    this.cameras.main.shake(80, 0.002)
+    // 命中火花
+    this.createHitEffect(target.x, target.y)
+
+    // 根据血量调整颜色
+    if (next === 2) target.fillColor = 0xff4444
+    if (next === 1) target.fillColor = 0xff2222
+    if (next <= 0) {
+      target.destroy()
+      this.destroyedTargets += 1
+      // 全部目标被清除时显示提示
+      if (this.destroyedTargets >= this.totalTargets && this.totalTargets > 0) {
+        const banner = this.add
+          .text(GAME_WIDTH / 2, 80, 'Stage Clear!', { color: '#ffff88' })
+          .setOrigin(0.5)
+          .setDepth(20)
+          .setAlpha(0)
+        this.tweens.add({
+          targets: banner,
+          alpha: 1,
+          duration: 250,
+          yoyo: true,
+          hold: 600,
+          repeat: 1,
+          onComplete: () => banner.destroy(),
+        })
+      }
+    }
+    this.updateUI()
+  }
+
+  private updateUI() {
+    this.uiText.setText(`Targets: ${this.destroyedTargets}/${this.totalTargets}`)
+  }
+
+  // 开火的枪口闪光效果
+  private createMuzzleFlash(x: number, y: number) {
+    const flash = this.add.circle(x, y, 6, 0xffffaa).setAlpha(0.9)
+    this.tweens.add({
+      targets: flash,
+      alpha: 0,
+      scale: 1.8,
+      duration: 120,
+      onComplete: () => flash.destroy(),
+    })
+  }
+
+  // 命中火花：少量无重力的粒子短暂飞散
+  private createHitEffect(x: number, y: number) {
+    for (let i = 0; i < 6; i++) {
+      const p = this.add.circle(x, y, 2, 0xffcc88)
+      this.physics.add.existing(p, false)
+      const body = p.body as Phaser.Physics.Arcade.Body
+      body.setAllowGravity(false)
+      const angle = Math.random() * Math.PI * 2
+      const speed = 140 + Math.random() * 80
+      body.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed)
+      this.tweens.add({ targets: p, alpha: 0, duration: 220, onComplete: () => p.destroy() })
+    }
   }
 
   private spawnBullet() {
     const originX = this.player.x + (this.facing === 1 ? 14 : -14)
     const originY = this.player.y - 2
+    // 枪口闪光
+    this.createMuzzleFlash(originX, originY)
+
     const bullet = this.add.circle(originX, originY, 4, 0xffe066)
     this.physics.add.existing(bullet, false)
     const b = bullet.body as Phaser.Physics.Arcade.Body
@@ -86,7 +185,7 @@ export class MainScene extends Phaser.Scene {
     // 水平移动由输入抽象决定
     const ax = this.inputMgr.axisX(this.playerIdx)
     body.setVelocityX(ax * this.speed)
-    if (ax !== 0) this.facing = ax > 0 ? 1 : -1
+    if (ax !== 0) this.facing = (ax as 1 | -1) > 0 ? 1 : -1
 
     // 跳跃
     if (onGround && this.inputMgr.isJumpDown(this.playerIdx)) {
@@ -109,7 +208,6 @@ export class MainScene extends Phaser.Scene {
       }
     }
 
-    // TODO: 预留与敌人的重叠检测钩子
-    // this.physics.add.overlap(this.bullets, enemyGroup, (bullet, enemy) => { /* ... */ })
+    // TODO: 预留与更完善的敌人系统对接（当前 targets 为占位示例）
   }
 }
